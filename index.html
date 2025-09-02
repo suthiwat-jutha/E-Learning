@@ -175,7 +175,7 @@ video.addEventListener("timeupdate", () => {
   });
   if(video.currentTime >= video.duration && !activePopup){
     showSummary();
-    loadReport(); // อัปเดตรายงานเมื่อจบ
+    loadReport();
     adminReport.style.display = "block";
   }
 });
