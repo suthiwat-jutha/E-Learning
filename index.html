@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>E-Learning All-in-One</title>
+<style>
+  body { font-family: Arial; margin: 20px; text-align: center; background: #f5f5f5; }
+  #loginForm, #videoContainer, #adminReport { max-width: 640px; margin: auto; position: relative; }
+  #videoContainer, #adminReport { display: none; }
+  video { width: 100%; border: 1px solid #ccc; border-radius: 8px; }
+  .quizPopup, .summaryPopup { display: none; position: absolute; top: 0; left: 0;
+    background: rgba(255,255,255,0.95); padding: 20px; border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);}
+  .quizPopup button, .summaryPopup button { margin-top: 10px; }
+  #status { text-align: center; margin-top: 10px; font-weight: bold; }
+  table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+  th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+  th { background-color: #f2f2f2; }
+  button { padding: 6px 12px; margin: 5px; }
+</style>
+</head>
+<body>
+
+<h1>E-Learning Platform All-in-One</h1>
+
+<div id="loginForm">
+  <p>กรุณากรอกข้อมูลผู้เรียนก่อนเริ่ม</p>
+  <input type="text" id="username" placeholder="ชื่อผู้เรียน"><br><br>
+  <input type="text" id="employeeId" placeholder="รหัสพนักงาน 6 หลัก" maxlength="6"><br><br>
+  <button id="startBtn">เริ่มเรียน</button>
+  <p id="loginError" style="color:red;"></p>
+</div>
+
+<div id="videoContainer">
+  <video id="myVideo" controls>
+    <source src="https://drive.google.com/uc?export=download&id=13puKcmpSmgCDFydEccWTG_kC4w0aW8xK" type="video/mp4">
+    Your browser does not support HTML5 video.
+  </video>
+  <div id="status">สถานะ: ยังไม่ตอบคำถาม | คะแนน: 0/0</div>
+</div>
+
+<div id="adminReport">
+  <h2>รายงานผู้เรียนทั้งหมด</h2>
+  <button id="exportBtn">Export CSV</button>
+  <table id="reportTable">
+    <thead>
+      <tr>
+        <th>รหัสพนักงาน</th>
+        <th>ชื่อผู้เรียน</th>
+        <th>คะแนน</th>
+        <th>จำนวน quiz ผ่าน</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA_BuP5aI7RkRKYtj2vlXGTJsvolObnlrM",
+  authDomain: "e-learning-project-27469.firebaseapp.com",
+  projectId: "e-learning-project-27469",
+  storageBucket: "e-learning-project-27469.firebasestorage.app",
+  messagingSenderId: "358194749254",
+  appId: "1:358194749254:web:657bc6d2741cc1611b4f47"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const loginForm = document.getElementById("loginForm");
+const startBtn = document.getElementById("startBtn");
+const usernameInput = document.getElementById("username");
+const employeeIdInput = document.getElementById("employeeId");
+const loginError = document.getElementById("loginError");
+
+const videoContainer = document.getElementById("videoContainer");
+const video = document.getElementById("myVideo");
+const status = document.getElementById("status");
+
+const adminReport = document.getElementById("adminReport");
+const tbody = document.querySelector("#reportTable tbody");
+const exportBtn = document.getElementById("exportBtn");
+
+let userId = "";
+let quizzes = [];
+let score = 0;
+let activePopup = null;
+
+const quizPool = [
+  { time: 5, question: "5 + 3 = ?", answer: "8" },
+  { time: 12, question: "10 - 4 = ?", answer: "6" },
+  { time: 18, question: "2 * 3 = ?", answer: "6" },
+  { time: 20, question: "9 / 3 = ?", answer: "3" }
+];
+
+function updateStatus() {
+  status.innerText = `สถานะ: ผ่าน ${quizzes.filter(q=>q.passed).length}/${quizzes.length} quiz | คะแนน: ${score}/${quizzes.length}`;
+}
+
+function showQuiz(q) {
+  if (activePopup) return;
+  const popup = document.createElement("div");
+  popup.className = "quizPopup";
+  popup.style.top = Math.random() * 50 + 10 + "%";
+  popup.style.left = Math.random() * 50 + 10 + "%";
+  popup.innerHTML = `
+    <p>คำถาม: ${q.question}</p>
+    <input type="text" class="answerInput" placeholder="พิมพ์คำตอบ"><br>
+    <button class="submitAnswer">ส่งคำตอบ</button>
+  `;
+  videoContainer.appendChild(popup);
+  activePopup = popup;
+
+  popup.querySelector(".submitAnswer").addEventListener("click", async () => {
+    const input = popup.querySelector(".answerInput");
+    if (input.value === q.answer) {
+      q.passed = true;
+      score++;
+      updateStatus();
+      popup.remove();
+      activePopup = null;
+      video.play();
+    } else {
+      alert("ตอบผิด! จะเล่นวิดีโอใหม่");
+      popup.remove();
+      activePopup = null;
+      q.passed = false;
+      score = quizzes.filter(q=>q.passed).length;
+      updateStatus();
+      video.currentTime = 0;
+      video.play();
+    }
+    await setDoc(doc(db, "progress", userId), {
+      quizzes: quizzes.map(q=>q.passed),
+      videoTime: video.currentTime,
+      score: score,
+      username: usernameInput.value,
+      employeeId: employeeIdInput.value
+    });
+  });
+}
+
+function showSummary() {
+  if (activePopup) return;
+  const popup = document.createElement("div");
+  popup.className = "summaryPopup";
+  popup.style.top = "20%";
+  popup.style.left = "20%";
+  popup.style.width = "60%";
+  popup.innerHTML = `
+    <h2>สรุปคะแนน</h2>
+    <p>คุณ ${usernameInput.value} (รหัสพนักงาน: ${employeeIdInput.value})</p>
+    <p>ได้คะแนน: ${score} / ${quizzes.length}</p>
+    <button id="closeSummary">ปิด</button>
+  `;
+  videoContainer.appendChild(popup);
+  activePopup = popup;
+
+  popup.querySelector("#closeSummary").addEventListener("click", () => {
+    popup.remove();
+    activePopup = null;
+  });
+}
+
+video.addEventListener("timeupdate", () => {
+  quizzes.forEach(q => {
+    if (!q.passed && video.currentTime >= q.time) {
+      video.pause();
+      showQuiz(q);
+    }
+  });
+  if(video.currentTime >= video.duration && !activePopup){
+    showSummary();
+    loadReport(); // อัปเดตรายงานเมื่อจบ
+    adminReport.style.display = "block";
+  }
+});
+
+async function loadProgress() {
+  const snap = await getDoc(doc(db, "progress", userId));
+  if (snap.exists()) {
+    const data = snap.data();
+    quizzes.forEach((q,i) => { q.passed = data.quizzes[i]; });
+    score = data.score || 0;
+    if (data.videoTime) video.currentTime = data.videoTime;
+    updateStatus();
+  } else {
+    updateStatus();
+  }
+}
+
+async function loadReport() {
+  tbody.innerHTML = "";
+  const querySnap = await getDocs(collection(db, "progress"));
+  querySnap.forEach(docSnap => {
+    const data = docSnap.data();
+    const quizzesPassed = data.quizzes.filter(q=>q).length;
+    const row = document.createElement("tr");
+    row.innerHTML = `<td>${data.employeeId}</td><td>${data.username}</td><td>${data.score}</td><td>${quizzesPassed}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+function exportCSV() {
+  const rows = [["รหัสพนักงาน","ชื่อผู้เรียน","คะแนน","จำนวน quiz ผ่าน"]];
+  tbody.querySelectorAll("tr").forEach(tr => {
+    const cols = Array.from(tr.querySelectorAll("td")).map(td => td.innerText);
+    rows.push(cols);
+  });
+  const csvContent = rows.map(e => e.join(",")).join("\n");
+  const blob = new Blob([csvContent], {type: "text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "E-Learning_Report.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+exportBtn.addEventListener("click", exportCSV);
+
+startBtn.addEventListener("click", () => {
+  const name = usernameInput.value.trim();
+  const empId = employeeIdInput.value.trim();
+  if(!name || !/^\d{6}$/.test(empId)) {
+    loginError.innerText = "กรุณากรอกชื่อและรหัสพนักงาน 6 หลักให้ถูกต้อง";
+    return;
+  }
+  loginError.innerText = "";
+  userId = empId;
+  quizzes = quizPool.sort(() => Math.random() - 0.5).map(q=>({...q, passed:false}));
+  score = 0;
+  updateStatus();
+  loginForm.style.display = "none";
+  videoContainer.style.display = "block";
+  loadProgress();
+});
+</script>
+
+</body>
+</html>
